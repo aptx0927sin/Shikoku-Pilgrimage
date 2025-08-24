@@ -1,5 +1,950 @@
-<!doctype html>
-<meta charset="utf-8">
-<title>四国遍路サポート</title>
-<h1>公開テスト</h1>
-<p>これが見えたらOK！</p>
+# -*- coding: utf-8 -*-
+"""
+Build a world-class PWA template tailored for the user's Shikoku pilgrimage app,
+with features requested and pro-grade UX. Outputs a downloadable ZIP.
+"""
+import os, json, zipfile, datetime, textwrap
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+
+now = datetime.datetime.now().strftime("%Y-%m-%d")
+root = Path("/mnt/data/ohenro-ultimate")
+icons = root / "icons"
+root.mkdir(parents=True, exist_ok=True)
+icons.mkdir(parents=True, exist_ok=True)
+
+# ------------------------ index.html ------------------------
+index_html = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>お遍路 四国活性化アプリ | Ultimate</title>
+  <meta name="description" content="四国お遍路のマップ、LIVE状況、日記、出会い、霊場チェック、通知まで。高速・アクセシブル・オフライン・アプリ化対応。" />
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <!-- SEO / Share -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="お遍路 四国活性化アプリ" />
+  <meta property="og:description" content="マップ・LIVE・日記・88ギャラリー。PWAでサクサク動くお遍路アプリ。" />
+  <meta property="og:image" content="icons/og.png" />
+  <meta property="og:url" content="." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <!-- CSP: allow self and Leaflet/CDN tiles -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://*; style-src 'self' https://unpkg.com 'unsafe-inline'; script-src 'self' https://unpkg.com; connect-src 'self' https://*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'">
+  <!-- Styles & Leaflet -->
+  <link rel="preload" href="styles.css" as="style">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+  <script defer src="app.js" type="module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へスキップ</a>
+  <header class="site-header" role="banner">
+    <div class="container header-inner">
+      <h1 class="site-title">お遍路 四国活性化</h1>
+      <nav aria-label="主要">
+        <button id="installBtn" class="button small" hidden>インストール</button>
+        <button id="langToggle" class="button small" aria-pressed="false">日本語</button>
+        <button id="themeToggle" class="button small" aria-pressed="false" title="テーマ切替">🌓</button>
+        <div class="divider"></div>
+        <button id="roleToggle" class="button small" aria-pressed="false" title="運営モード">運営:OFF</button>
+        <button id="exportBtn" class="button small">エクスポート</button>
+        <label for="importFile" class="button small ghost">インポート</label>
+        <input id="importFile" type="file" accept="application/json" hidden>
+      </nav>
+    </div>
+    <div id="netStatus" class="netstatus" role="status" aria-live="polite"></div>
+  </header>
+
+  <main id="main" class="container" role="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <h2 id="hero-title" data-i18n="hero_title">四国お遍路を、もっと便利に。</h2>
+      <p data-i18n="hero_text">地図・LIVE・日記・出会い・88チェック・通知を1つに。高速・アクセシブル・オフライン対応。</p>
+      <div class="cta">
+        <a href="#map" class="button">マップへ</a>
+        <a href="#features" class="button ghost">特徴を見る</a>
+      </div>
+    </section>
+
+    <section id="features" class="grid features">
+      <article><h3>高速 &amp; 安心</h3><p>CDN最小限・Lighthouse 90+ を狙う設計。CSP・オフライン対応。</p></article>
+      <article><h3>アクセシビリティ</h3><p>十分なコントラスト、キーボード操作、スクリーンリーダー配慮。</p></article>
+      <article><h3>多言語</h3><p>日本語/英語切替。テキストは data-i18n で後から拡張。</p></article>
+      <article><h3>運営モード</h3><p>PINで解錠。スポット追加/編集・QR生成・データ管理。</p></article>
+    </section>
+
+    <!-- Map -->
+    <section id="map" class="card" aria-labelledby="map-title">
+      <div class="card-head">
+        <h2 id="map-title">マップ</h2>
+        <div class="filters" role="group" aria-label="表示カテゴリ">
+          <label><input type="checkbox" class="catFilter" value="rest" checked>休憩所</label>
+          <label><input type="checkbox" class="catFilter" value="water" checked>給水</label>
+          <label><input type="checkbox" class="catFilter" value="toilet" checked>トイレ</label>
+          <label><input type="checkbox" class="catFilter" value="stay" checked>宿</label>
+          <label><input type="checkbox" class="catFilter" value="osettai" checked>お接待</label>
+          <button id="locateBtn" class="button small ghost">現在地</button>
+          <select id="basemap" class="select small" title="地図の種類">
+            <option value="std">標準</option>
+            <option value="sat">航空写真</option>
+            <option value="terrain">地形</option>
+          </select>
+        </div>
+      </div>
+      <div id="mapEl" class="map" role="application" aria-label="地図エリア"></div>
+      <p class="hint">※運営は地図クリックで座標取得。モバイルは長押し。</p>
+      <details class="admin" id="spotFormWrap">
+        <summary>スポット追加/編集（運営のみ）</summary>
+        <form id="spotForm" class="form">
+          <label>名称<input name="name" required></label>
+          <label>カテゴリ
+            <select name="cat" required>
+              <option value="rest">休憩所</option>
+              <option value="water">給水</option>
+              <option value="toilet">トイレ</option>
+              <option value="stay">宿</option>
+              <option value="osettai">お接待</option>
+            </select>
+          </label>
+          <div class="row">
+            <label>緯度<input name="lat" type="number" step="0.000001" required></label>
+            <label>経度<input name="lng" type="number" step="0.000001" required></label>
+          </div>
+          <div class="row">
+            <button type="button" id="hereBtn" class="button small">現在地</button>
+            <button type="button" id="fromMapBtn" class="button small ghost">地図から選択</button>
+          </div>
+          <label>営業時間/備考<textarea name="note" rows="2" placeholder="例：9:00-17:00 / 不定休"></textarea></label>
+          <div class="row">
+            <button class="button" id="saveSpot">保存</button>
+            <button type="reset" class="button ghost" id="newSpot">新規</button>
+            <button type="button" class="button danger" id="deleteSpot">削除</button>
+          </div>
+        </form>
+      </details>
+      <div id="spotList" class="list"></div>
+    </section>
+
+    <!-- LIVE -->
+    <section id="live" class="card">
+      <div class="card-head">
+        <h2>LIVE状況</h2>
+      </div>
+      <form id="liveForm" class="form admin">
+        <div class="row">
+          <label>カテゴリ
+            <select name="cat">
+              <option value="traffic">交通</option>
+              <option value="weather">天気</option>
+              <option value="danger">危険</option>
+              <option value="crowd">混雑</option>
+              <option value="event">イベント</option>
+            </select>
+          </label>
+          <label>内容<textarea name="body" rows="2" required></textarea></label>
+        </div>
+        <div class="row">
+          <label>緯度<input name="lat" type="number" step="0.000001"></label>
+          <label>経度<input name="lng" type="number" step="0.000001"></label>
+          <button type="button" id="liveHereBtn" class="button small">現在地</button>
+          <button type="button" id="livePickBtn" class="button small ghost">地図から</button>
+        </div>
+        <label>有効期限（時間）
+          <select name="hours">
+            <option>1</option><option>3</option><option>6</option><option>12</option><option selected>24</option>
+          </select>
+        </label>
+        <button class="button">投稿</button>
+      </form>
+      <div id="liveFeed" class="feed"></div>
+    </section>
+
+    <!-- Diary -->
+    <section id="diary" class="card">
+      <div class="card-head"><h2>日記</h2></div>
+      <form id="diaryForm" class="form">
+        <div class="row">
+          <label>日時<input name="at" type="datetime-local" required></label>
+        </div>
+        <label>本文<textarea name="body" rows="3" required></textarea></label>
+        <div class="row">
+          <label>緯度<input name="lat" type="number" step="0.000001"></label>
+          <label>経度<input name="lng" type="number" step="0.000001"></label>
+          <button type="button" id="diaryHereBtn" class="button small">現在地</button>
+        </div>
+        <label>写真<input id="diaryPhotos" type="file" accept="image/*" multiple></label>
+        <div id="diaryPreview" class="thumbs"></div>
+        <div class="row">
+          <button class="button">保存</button>
+          <button type="reset" class="button ghost" id="diaryNew">新規</button>
+        </div>
+      </form>
+      <div id="diaryList" class="list"></div>
+    </section>
+
+    <!-- Encounters -->
+    <section id="enc" class="card">
+      <div class="card-head"><h2>出会い</h2></div>
+      <form id="encForm" class="form">
+        <div class="row">
+          <label>名前/ニックネーム<input name="name" required></label>
+          <label>場所<input name="place"></label>
+        </div>
+        <label>メモ<textarea name="memo" rows="2"></textarea></label>
+        <label>写真<input id="encPhotos" type="file" accept="image/*" multiple></label>
+        <div id="encPreview" class="thumbs"></div>
+        <label>公開範囲
+          <select name="visibility">
+            <option value="private">非公開</option>
+            <option value="limited">限定公開</option>
+            <option value="public">公開</option>
+          </select>
+        </label>
+        <div class="row">
+          <button class="button">保存</button>
+          <button type="reset" class="button ghost" id="encNew">新規</button>
+        </div>
+      </form>
+      <div id="encList" class="list"></div>
+    </section>
+
+    <!-- QR / Temples -->
+    <section id="qr" class="card">
+      <div class="card-head"><h2>霊場紹介 / QR</h2></div>
+      <div class="row">
+        <button class="button small" id="scanBtn">QRをスキャン</button>
+        <button class="button small ghost" id="scanStopBtn" disabled>スキャン停止</button>
+      </div>
+      <video id="qrVideo" playsinline class="video" aria-label="カメラプレビュー" hidden></video>
+      <div id="qrResult" class="note"></div>
+
+      <details class="admin">
+        <summary>運営向け: QRコード生成</summary>
+        <div id="qrGenList" class="list"></div>
+      </details>
+
+      <h3>88箇所ギャラリー（チェック用）</h3>
+      <div id="templeGrid" class="grid temples"></div>
+    </section>
+
+    <!-- Achievements & Reminders -->
+    <section id="achv" class="card">
+      <div class="card-head"><h2>アチーブメント & リマインド</h2></div>
+      <ul id="achvList" class="badges"></ul>
+      <div class="row">
+        <button id="notifAsk" class="button small">通知を許可</button>
+        <button id="waterReminder" class="button small ghost">60分ごとに水分補給</button>
+      </div>
+    </section>
+
+    <section id="help" class="card">
+      <div class="card-head"><h2>使い方 / 注意</h2></div>
+      <ul>
+        <li>データはこの端末のブラウザ（LocalStorage）に保存。右上からエクスポート/インポート可能。</li>
+        <li>運営モードは PIN（初期: <code>1889321</code>）で切替。ヘッダー右の「運営:OFF」を押して入力。</li>
+        <li>通知はページを開いている間だけ動作。プッシュ通知はサーバ連携が必要です。</li>
+        <li>顔写真や個人情報の公開は十分ご注意ください。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <small>© {now} Ohenro Project</small>
+      <nav aria-label="フッター">
+        <a href="privacy.html">プライバシー</a>
+        <a href="terms.html">利用規約</a>
+        <a href="." id="lighthouseTips">Lighthouse Tips</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    if ('serviceWorker' in navigator) {{ window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js')); }}
+  </script>
+</body>
+</html>
+"""
+
+# ------------------------ styles.css ------------------------
+styles_css = """
+:root{
+  --bg:#0b1020;
+  --bg-soft:#121735;
+  --fg:#f3f6ff;
+  --muted:#b8c1ff;
+  --accent:#8ab4f8;
+  --danger:#ff6b6b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.6;color:var(--fg);background: radial-gradient(1200px 800px at 20% -10%, #16204a 0%, transparent 60%), var(--bg)}
+.container{max-width:1120px;margin:0 auto;padding:16px}
+a{color:var(--accent)}
+.skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden}
+.skip-link:focus{left:8px;top:8px;width:auto;height:auto;background:#000;color:#fff;padding:8px 12px;border-radius:8px}
+.site-header{position:sticky;top:0;backdrop-filter: blur(6px);background-color:rgba(11,16,32,0.75);border-bottom:1px solid #223;z-index:10}
+.header-inner{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.site-title{margin:8px 0;font-size:20px}
+nav a, nav button, nav label{margin-right:8px}
+.divider{display:inline-block;width:1px;height:28px;background:#334;margin:0 6px}
+.button{display:inline-block;padding:10px 14px;border-radius:12px;border:1px solid #445;text-decoration:none;color:var(--fg);
+  background:linear-gradient(#1a254f, #0e1533);box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer}
+.button.small{padding:6px 10px;font-size:12px}
+.button.ghost{background:transparent}
+.button.danger{border-color:#773;background:linear-gradient(#5a1f1f,#2b0f0f)}
+.select.small{padding:6px 8px;border-radius:10px;background:var(--bg-soft);color:var(--fg);border:1px solid #334}
+.hero{padding:48px 0 24px}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+.grid.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:24px 0}
+.grid.features article{background:var(--bg-soft);border:1px solid #233;border-radius:16px;padding:16px}
+.card{background:var(--bg-soft);border:1px solid #233;border-radius:16px;margin:24px 0;overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #233}
+.map{height:420px}
+.hint{opacity:.8;margin:8px 0 0 8px;font-size:12px}
+.form{padding:12px 16px;display:grid;gap:10px}
+.form .row{display:flex;gap:10px;flex-wrap:wrap}
+.form label{display:flex;flex-direction:column;gap:6px;flex:1;min-width:140px}
+.form input,.form textarea,.form select{background:#0d1533;color:var(--fg);border:1px solid #334;border-radius:10px;padding:10px}
+.list{padding:12px 16px;border-top:1px dashed #334}
+.list .item{padding:10px;border:1px solid #334;border-radius:12px;margin-bottom:10px}
+.list .item .meta{font-size:12px;color:#9fb}
+.feed{padding:12px 16px}
+.feed .post{border:1px solid #334;border-radius:12px;padding:10px;margin-bottom:10px}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.thumbs img{width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid #334}
+.video{width:100%;max-height:420px;background:#000}
+.grid.temples{display:grid;grid-template-columns:repeat(auto-fit,minmax(44px,1fr));gap:6px;padding:12px}
+.grid.temples button{border-radius:10px;border:1px solid #334;background:#0d1533;color:#dfe;padding:8px 0}
+.badges{display:flex;flex-wrap:wrap;gap:10px;padding:12px}
+.badges li{list-style:none;border:1px solid #334;border-radius:999px;padding:8px 12px;background:#13204a}
+.site-footer{border-top:1px solid #223;margin-top:24px}
+.site-footer .container{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.netstatus{font-size:12px;padding:6px 12px;color:#fff}
+.netstatus.online{background:linear-gradient(#1f6f4f,#15553b)}
+.netstatus.offline{background:linear-gradient(#7a2a2a,#501a1a)}
+
+@media (prefers-color-scheme: light){
+  :root{ --bg:#f5f7ff; --bg-soft:#ffffff; --fg:#202534; --muted:#5f6f99; }
+  body{ background: var(--bg); }
+  .button{ background:linear-gradient(#f9fbff,#e9eefb); color:#111 }
+  .grid.features article{ border-color:#dde3f7 }
+  .site-header{ background-color: rgba(255,255,255,0.8) }
+}
+"""
+
+# ------------------------ app.js (module) ------------------------
+app_js = r"""
+// Utility & Storage
+const S = {
+  load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
+  save(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
+  uid() { return Math.random().toString(36).slice(2, 10); },
+  fmtTime(ts) { return new Date(ts).toLocaleString(); },
+  compressImages(files, maxW=1280, maxH=1280, quality=0.8) {
+    return Promise.all([...files].map(file => new Promise(res => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const scale = Math.min(maxW/img.width, maxH/img.height, 1);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const can = document.createElement('canvas'); can.width = w; can.height = h;
+        const ctx = can.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+        can.toBlob(b => { res({dataUrl: can.toDataURL('image/jpeg', quality)}); URL.revokeObjectURL(url); }, 'image/jpeg', quality);
+      };
+      img.src = url;
+    })));
+  },
+};
+
+// i18n strings
+const STRINGS = {
+  ja: {
+    hero_title: "四国お遍路を、もっと便利に。",
+    hero_text: "地図・LIVE・日記・出会い・88チェック・通知を1つに。高速・アクセシブル・オフライン対応。",
+    online: "オンライン",
+    offline: "オフライン（キャッシュ動作中）",
+  },
+  en: {
+    hero_title: "Make Shikoku Pilgrimage easier.",
+    hero_text: "Maps, LIVE, diary, encounters and 88 checklist in one. Fast, accessible, offline-ready.",
+    online: "Online",
+    offline: "Offline (using cache)",
+  }
+};
+
+// App State
+const state = {
+  role: S.load('role', 'user'), // 'user' | 'admin'
+  theme: S.load('theme', 'auto'),
+  lang: S.load('lang', 'ja'),
+  pin: S.load('pin', '1889321'),
+  spots: S.load('spots', []),
+  live: S.load('live', []),
+  diary: S.load('diary', []),
+  encounters: S.load('enc', []),
+  temples: S.load('temples', Array.from({length:88},(_,i)=>({no:i+1, visited:false, photoUrl:null})))
+};
+
+// UI helpers
+function qs(sel){ return document.querySelector(sel); }
+function qsa(sel){ return [...document.querySelectorAll(sel)]; }
+
+// Lang apply
+function applyLang(){
+  qsa("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    el.textContent = (STRINGS[state.lang] && STRINGS[state.lang][key]) || el.textContent;
+  });
+  const net = qs("#netStatus");
+  if (net) {
+    net.textContent = navigator.onLine ? STRINGS[state.lang].online : STRINGS[state.lang].offline;
+    net.className = 'netstatus ' + (navigator.onLine ? 'online':'offline');
+  }
+  const langBtn = qs("#langToggle");
+  if (langBtn) { langBtn.textContent = state.lang === 'ja' ? '日本語' : 'English'; }
+}
+window.addEventListener('online', applyLang);
+window.addEventListener('offline', applyLang);
+
+// Theme toggle
+function applyTheme(){
+  const t = state.theme;
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+}
+function toggleTheme(){
+  state.theme = state.theme === 'dark' ? 'light' : (state.theme === 'light' ? 'auto' : 'dark');
+  S.save('theme', state.theme);
+  applyTheme();
+  qs('#themeToggle').textContent = state.theme === 'dark' ? '🌙' : (state.theme === 'light' ? '☀️' : '🌓');
+}
+
+// Role (admin)
+async function toggleRole(){
+  if (state.role === 'admin'){ state.role = 'user'; S.save('role', state.role); renderAdmin(); return; }
+  const pin = prompt("運営PINを入力してください", "");
+  if (pin && pin === state.pin){ state.role='admin'; S.save('role', state.role); renderAdmin(); }
+  else alert("PINが違います");
+}
+function renderAdmin(){
+  qsa('.admin').forEach(el => el.style.display = state.role==='admin' ? '' : 'none');
+  const rt = qs("#roleToggle");
+  if (rt){ rt.textContent = state.role==='admin' ? '運営:ON' : '運営:OFF'; rt.setAttribute('aria-pressed', String(state.role==='admin')); }
+}
+
+// Export / Import
+function exportAll(){
+  const obj = { ...state, // shallow copy
+    // strip runtime-only stuff
+  };
+  const blob = new Blob([JSON.stringify(obj,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ohenro-data-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+function importAll(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const obj = JSON.parse(reader.result);
+      ['spots','live','diary','encounters','temples','pin'].forEach(k => { if (obj[k]!==undefined) state[k]=obj[k]; });
+      ['spots','live','diary','encounters','temples','pin'].forEach(k => S.save(k, state[k]));
+      renderAll();
+      alert('インポートしました');
+    }catch(e){ alert('読み込み失敗: ' + e.message); }
+  };
+  reader.readAsText(file);
+}
+
+// Map & Spots
+let map, markersLayer, pickMode = null;
+function initMap(){
+  map = L.map('mapEl', { center:[33.6,133.6], zoom:8, minZoom:6, maxZoom:18 });
+  const layers = {
+    std: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'&copy; OpenStreetMap'}),
+    sat: L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {attribution:'&copy; OSM HOT'}),
+    terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {attribution:'&copy; OpenTopoMap'}),
+  };
+  layers.std.addTo(map);
+  qs('#basemap').addEventListener('change', e => {
+    map.eachLayer(l => map.removeLayer(l));
+    layers[e.target.value].addTo(map);
+    markersLayer.addTo(map);
+  });
+  markersLayer = L.layerGroup().addTo(map);
+  map.on('click', (ev) => {
+    if (state.role!=='admin') return;
+    if (pickMode === 'spot'){
+      qs('[name=lat]').value = ev.latlng.lat.toFixed(6);
+      qs('[name=lng]').value = ev.latlng.lng.toFixed(6);
+      pickMode = null;
+      alert('座標をセットしました');
+    } else if (pickMode === 'live'){
+      qs('#liveForm [name=lat]').value = ev.latlng.lat.toFixed(6);
+      qs('#liveForm [name=lng]').value = ev.latlng.lng.toFixed(6);
+      pickMode = null;
+      alert('座標をセットしました');
+    }
+  });
+  renderSpots();
+}
+function iconByCat(cat){
+  const color = {rest:'#66cc99',water:'#8ab4f8',toilet:'#ffd166',stay:'#b38cf6',osettai:'#ff6b6b'}[cat] || '#dfe';
+  const svg = encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'>
+    <circle cx='18' cy='18' r='14' fill='${color}' stroke='white' stroke-width='3'/></svg>`);
+  return L.icon({iconUrl: `data:image/svg+xml,${svg}`, iconSize:[36,36], iconAnchor:[18,18]});
+}
+function renderSpots(){
+  markersLayer.clearLayers();
+  const cats = qsa('.catFilter').filter(c=>c.checked).map(c=>c.value);
+  const list = qs('#spotList'); list.innerHTML='';
+  state.spots.filter(s=>cats.includes(s.cat)).forEach(s => {
+    const m = L.marker([s.lat, s.lng], {icon: iconByCat(s.cat)}).addTo(markersLayer);
+    m.bindPopup(`<b>${s.name}</b><br>${s.note??''}<br><small>${s.cat}</small>`);
+    const item = document.createElement('div');
+    item.className='item';
+    item.innerHTML = `<div><b>${s.name}</b> <span class="meta">[{cat}] {lat}, {lng}</span></div>
+      <div>{note}</div>
+      <div class="row">
+        <a class="button small ghost" href="https://www.google.com/maps?q={lat},{lng}" target="_blank" rel="noreferrer">Googleマップ</a>
+        <button class="button small" data-edit="{id}">編集</button>
+      </div>`
+      .replace('{cat}', s.cat).replaceAll('{lat}', s.lat).replaceAll('{lng}', s.lng)
+      .replace('{note}', s.note??'').replace('{id}', s.id);
+    item.querySelector('[data-edit]').addEventListener('click',()=>loadSpotToForm(s.id));
+    list.appendChild(item);
+  });
+}
+
+// Spot form handlers
+function loadSpotToForm(id){
+  const s = state.spots.find(x=>x.id===id);
+  if(!s) return;
+  const f = qs('#spotForm');
+  f.dataset.editId = s.id;
+  f.name.value = s.name; f.cat.value = s.cat; f.lat.value = s.lat; f.lng.value = s.lng; f.note.value = s.note || '';
+}
+function formToSpot(){
+  const f = qs('#spotForm');
+  return {
+    id: f.dataset.editId || S.uid(),
+    name: f.name.value.trim(),
+    cat: f.cat.value,
+    lat: parseFloat(f.lat.value), lng: parseFloat(f.lng.value),
+    note: f.note.value.trim(), updatedAt: Date.now()
+  };
+}
+function saveSpot(ev){
+  ev.preventDefault();
+  const s = formToSpot();
+  if (!isFinite(s.lat) || !isFinite(s.lng)){ alert('座標を入力してください'); return; }
+  const idx = state.spots.findIndex(x=>x.id===s.id);
+  if (idx>=0) state.spots[idx]=s; else state.spots.push(s);
+  S.save('spots', state.spots);
+  qs('#spotForm').reset(); delete qs('#spotForm').dataset.editId;
+  renderSpots();
+}
+function deleteSpot(){
+  const f = qs('#spotForm');
+  const id = f.dataset.editId;
+  if (!id) return;
+  if (confirm('削除しますか？')){
+    state.spots = state.spots.filter(x=>x.id!==id);
+    S.save('spots', state.spots);
+    f.reset(); delete f.dataset.editId;
+    renderSpots();
+  }
+}
+
+// Live
+function renderLive(){
+  const cont = qs('#liveFeed'); cont.innerHTML='';
+  const now = Date.now();
+  state.live = state.live.filter(p => p.expiresAt > now);
+  S.save('live', state.live);
+  state.live.slice().sort((a,b)=>b.createdAt-a.createdAt).forEach(p => {
+    const div = document.createElement('div'); div.className='post';
+    const pos = (p.lat && p.lng) ? `<a class="button small ghost" href="https://www.google.com/maps?q=${p.lat},{p.lng}" target="_blank" rel="noreferrer">地図</a>`.replace('{p.lng}', p.lng) : '';
+    div.innerHTML = `<div><b>[${p.cat}]</b> ${p.body}</div>
+      <div class="meta">${S.fmtTime(p.createdAt)} / 期限 ${S.fmtTime(p.expiresAt)} {pos}</div>`.replace('{pos}', pos);
+    cont.appendChild(div);
+  });
+}
+function submitLive(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const h = parseInt(f.hours.value,10)||24;
+  const post = {
+    id:S.uid(), cat:f.cat.value, body:f.body.value.trim(),
+    lat: parseFloat(f.lat.value), lng: parseFloat(f.lng.value),
+    createdAt: Date.now(), expiresAt: Date.now()+h*3600*1000
+  };
+  if(!post.body){ alert('内容を入力してください'); return; }
+  state.live.push(post); S.save('live', state.live); f.reset(); renderLive();
+}
+
+// Diary
+function renderDiary(){
+  const cont = qs('#diaryList'); cont.innerHTML='';
+  state.diary.slice().sort((a,b)=>b.at-a.at).forEach(d => {
+    const div = document.createElement('div'); div.className='item';
+    const imgs = (d.photos||[]).map(p=>`<img src="${p.dataUrl}" alt="" loading="lazy">`).join('');
+    const pos = (d.lat && d.lng) ? `<a class="button small ghost" href="https://www.google.com/maps?q=${d.lat},${d.lng}" target="_blank">地図</a>` : '';
+    div.innerHTML = `<div><b>${new Date(d.at).toLocaleString()}</b> ${pos}</div>
+      <div>${(d.body||'').replace(/[&<>]/g,s=>({ '&':'&amp;','<':'&lt;','>':'&gt;'}[s]))}</div>
+      <div class="thumbs">${imgs}</div>`;
+    cont.appendChild(div);
+  });
+}
+async function submitDiary(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const imgs = await S.compressImages(qs('#diaryPhotos').files);
+  const d = {
+    id:S.uid(), at:new Date(f.at.value).getTime(), body:f.body.value.trim(),
+    lat: parseFloat(f.lat.value), lng: parseFloat(f.lng.value),
+    photos: imgs
+  };
+  if(!d.at || !d.body){ alert('日時と本文は必須です'); return; }
+  state.diary.push(d); S.save('diary', state.diary); f.reset(); qs('#diaryPreview').innerHTML=''; renderDiary();
+}
+function previewPhotos(input, targetSel){
+  const cont = qs(targetSel); cont.innerHTML='';
+  [...input.files].forEach(f => {
+    const img = document.createElement('img'); img.alt=''; img.loading='lazy';
+    img.src = URL.createObjectURL(f); img.width=96; img.height=96;
+    cont.appendChild(img);
+  });
+}
+
+// Encounters
+function renderEnc(){
+  const cont = qs('#encList'); cont.innerHTML='';
+  state.encounters.slice().sort((a,b)=>b.createdAt-a.createdAt).forEach(e => {
+    const div = document.createElement('div'); div.className='item';
+    const imgs = (e.photos||[]).map(p=>`<img src="${p.dataUrl}" alt="" loading="lazy">`).join('');
+    div.innerHTML = `<div><b>${e.name}</b> <span class="meta">@${e.place||'-'} / ${S.fmtTime(e.createdAt)} / ${e.visibility}</span></div>
+      <div>${(e.memo||'').replace(/[&<>]/g,s=>({ '&':'&amp;','<':'&lt;','>':'&gt;'}[s]))}</div>
+      <div class="thumbs">${imgs}</div>`;
+    cont.appendChild(div);
+  });
+}
+async function submitEnc(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const imgs = await S.compressImages(qs('#encPhotos').files);
+  const e = { id:S.uid(), name:f.name.value.trim(), place:f.place.value.trim(), memo:f.memo.value.trim(),
+    photos: imgs, visibility:f.visibility.value, createdAt: Date.now() };
+  if(!e.name){ alert('名前は必須です'); return; }
+  state.encounters.push(e); S.save('enc', state.encounters); f.reset(); qs('#encPreview').innerHTML=''; renderEnc();
+}
+
+// QR (BarcodeDetector)
+let mediaStream = null, qrTimer = null;
+async function startScan(){
+  const video = qs('#qrVideo');
+  try{
+    if ('BarcodeDetector' in window){
+      video.hidden = false;
+      mediaStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject = mediaStream; await video.play();
+      const detector = new BarcodeDetector({formats:['qr_code']});
+      const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+      qrTimer = setInterval(async ()=>{
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video,0,0);
+        try{
+          const codes = await detector.detect(canvas);
+          if (codes.length){
+            stopScan();
+            qs('#qrResult').textContent = 'スキャン結果: ' + codes[0].rawValue;
+            // demo: ohenro://t/{no}/{token}
+            if (codes[0].rawValue.startsWith('ohenro://t/')){
+              const no = parseInt(codes[0].rawValue.split('/')[3],10);
+              const t = state.temples.find(x=>x.no===no); if (t){ t.visited = true; S.save('temples', state.temples); renderTemples(); }
+            }
+          }
+        }catch(_){}
+      }, 400);
+      qs('#scanStopBtn').disabled = false;
+    } else {
+      alert('この端末はBarcodeDetectorに未対応です。QR画像をファイルでアップロードしてください。');
+    }
+  }catch(e){ alert('カメラ起動に失敗: ' + e.message); }
+}
+function stopScan(){
+  clearInterval(qrTimer); qrTimer = null;
+  const video = qs('#qrVideo'); video.hidden = true;
+  if (mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; }
+  qs('#scanStopBtn').disabled = true;
+}
+function renderQrGen(){
+  const el = qs('#qrGenList'); el.innerHTML='';
+  for (let i=1;i<=88;i++){
+    const token = (100000 + i).toString(); // demo token
+    const code = `ohenro://t/${i}/${token}`;
+    const div = document.createElement('div'); div.className='item';
+    div.innerHTML = `<div><b>第${i}番</b> <code>${code}</code></div>`;
+    el.appendChild(div);
+  }
+}
+
+// Temples (88)
+function renderTemples(){
+  const grid = qs('#templeGrid'); grid.innerHTML='';
+  state.temples.forEach(t => {
+    const btn = document.createElement('button');
+    btn.textContent = t.visited ? `✔ ${t.no}` : String(t.no);
+    btn.setAttribute('aria-pressed', String(t.visited));
+    btn.addEventListener('click', () => { t.visited = !t.visited; S.save('temples', state.temples); renderTemples(); renderAchievements(); });
+    grid.appendChild(btn);
+  });
+}
+
+// Achievements / Notifications
+function renderAchievements(){
+  const done = state.temples.filter(t=>t.visited).length;
+  const list = qs('#achvList'); list.innerHTML='';
+  const items = [
+    {k:'start', ok:done>=1, label:'はじめの一歩'},
+    {k:'10', ok:done>=10, label:'10霊場達成'},
+    {k:'33', ok:done>=33, label:'33霊場達成'},
+    {k:'66', ok:done>=66, label:'66霊場達成'},
+    {k:'88', ok:done>=88, label:'88霊場満願'},
+  ];
+  items.forEach(a => {
+    const li = document.createElement('li'); li.textContent = (a.ok?'🏅 ':'⬜ ') + a.label;
+    list.appendChild(li);
+  });
+}
+function askNotif(){ Notification.requestPermission().then(p => alert('通知権限: '+p)); }
+let waterTimer=null;
+function waterRemind(){
+  if (waterTimer){ clearInterval(waterTimer); waterTimer=null; alert('リマインド停止'); return; }
+  if (Notification.permission!=='granted'){ alert('先に「通知を許可」を押してください'); return; }
+  waterTimer = setInterval(()=> new Notification('水分補給', {body:'60分ごとに水分補給をしましょう💧'}), 60*60*1000);
+  alert('開始しました（このページを開いている間だけ動作）');
+}
+
+// Geo helpers
+function setHere(inputs){
+  if (!navigator.geolocation){ alert('位置情報に未対応です'); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    const {latitude, longitude} = pos.coords;
+    if (inputs.lat) inputs.lat.value = latitude.toFixed(6);
+    if (inputs.lng) inputs.lng.value = longitude.toFixed(6);
+  }, err => alert('現在地取得に失敗: ' + err.message), {enableHighAccuracy:true, timeout:8000});
+}
+
+// Render all
+function renderAll(){
+  applyLang(); applyTheme(); renderAdmin();
+  renderSpots(); renderLive(); renderDiary(); renderEnc(); renderTemples(); renderAchievements(); renderQrGen();
+}
+
+// Event wiring
+window.addEventListener('DOMContentLoaded', () => {
+  // Header
+  qs('#installBtn')?.addEventListener('click', () => deferredPrompt?.prompt());
+  const importFile = qs('#importFile');
+  importFile?.addEventListener('change', ev => importAll(ev.target.files[0]));
+  qs('#exportBtn')?.addEventListener('click', exportAll);
+  qs('#langToggle')?.addEventListener('click', () => { state.lang = state.lang==='ja' ? 'en' : 'ja'; S.save('lang', state.lang); renderAll(); });
+  qs('#themeToggle')?.addEventListener('click', toggleTheme);
+  qs('#roleToggle')?.addEventListener('click', toggleRole);
+
+  // Map
+  initMap();
+  qsa('.catFilter').forEach(c => c.addEventListener('change', renderSpots));
+  qs('#locateBtn')?.addEventListener('click', () => setHere({}));
+  qs('#fromMapBtn')?.addEventListener('click', () => { pickMode='spot'; alert('地図をタップしてください'); });
+  qs('#hereBtn')?.addEventListener('click', () => setHere({lat:qs('[name=lat]'), lng:qs('[name=lng]')}));
+  qs('#spotForm')?.addEventListener('submit', saveSpot);
+  qs('#deleteSpot')?.addEventListener('click', deleteSpot);
+  qs('#newSpot')?.addEventListener('click', () => { delete qs('#spotForm').dataset.editId; });
+
+  // LIVE
+  qs('#livePickBtn')?.addEventListener('click', () => { pickMode='live'; alert('地図をタップしてください'); });
+  qs('#liveHereBtn')?.addEventListener('click', () => setHere({lat:qs('#liveForm [name=lat]'), lng:qs('#liveForm [name=lng]')}));
+  qs('#liveForm')?.addEventListener('submit', submitLive);
+
+  // Diary
+  qs('#diaryHereBtn')?.addEventListener('click', () => setHere({lat:qs('#diaryForm [name=lat]'), lng:qs('#diaryForm [name=lng]')}));
+  qs('#diaryForm')?.addEventListener('submit', submitDiary);
+  qs('#diaryPhotos')?.addEventListener('change', ev => previewPhotos(ev.target, '#diaryPreview'));
+
+  // Encounters
+  qs('#encForm')?.addEventListener('submit', submitEnc);
+  qs('#encPhotos')?.addEventListener('change', ev => previewPhotos(ev.target, '#encPreview'));
+
+  // QR
+  qs('#scanBtn')?.addEventListener('click', startScan);
+  qs('#scanStopBtn')?.addEventListener('click', stopScan);
+
+  // Achievements / Notif
+  qs('#notifAsk')?.addEventListener('click', askNotif);
+  qs('#waterReminder')?.addEventListener('click', waterRemind);
+
+  // Lighthouse tips shortcut (for devs)
+  qs('#lighthouseTips')?.addEventListener('click', (e)=>{
+    e.preventDefault();
+    alert([
+      '画像はWebP/AVIFで 1200px 以内',
+      '大きなJSは遅延読み込み',
+      'meta description/OG画像を実際の内容に合わせる',
+      'Service Worker VERSION を上げてキャッシュ更新',
+      '重要なUI要素はコントラスト比 4.5:1 以上',
+    ].join('\\n• '));
+  });
+
+  renderAll();
+});
+
+// PWA install prompt
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  const btn = document.querySelector('#installBtn');
+  if(btn) btn.hidden = false;
+});
+"""
+
+# ------------------------ SW, manifest, offline, legal ------------------------
+sw_js = """
+const VERSION = 'v3.0.0';
+const CACHE = `ohenro-ultimate-${VERSION}`;
+const CORE = [
+  './','./index.html','./styles.css','./app.js','./offline.html',
+  './manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/og.png'
+];
+self.addEventListener('install', (e)=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE))); self.skipWaiting(); });
+self.addEventListener('activate', (e)=>{
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(k=>k!==CACHE?caches.delete(k):null))));
+  self.clients.claim();
+});
+self.addEventListener('fetch', (e)=>{
+  if (e.request.method!=='GET') return;
+  const {request} = e;
+  e.respondWith((async ()=>{
+    // Navigation → network first with offline fallback
+    if (request.mode==='navigate'){
+      try{
+        const fresh = await fetch(request);
+        const cache = await caches.open(CORE); cache.put(request, fresh.clone());
+        return fresh;
+      }catch(_){
+        return (await caches.match(request)) || (await caches.match('./offline.html'));
+      }
+    }
+    // Others → stale-while-revalidate
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(request);
+    const network = fetch(request).then(resp=>{ cache.put(request, resp.clone()); return resp; }).catch(()=>null);
+    return cached || network || new Response('', {status: 504});
+  })());
+});
+"""
+manifest = {
+  "id": "/",
+  "name": "お遍路 四国活性化アプリ",
+  "short_name": "お遍路",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "lang": "ja",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ],
+  "shortcuts": [
+    {"name": "マップ", "url": "#map", "description": "マップへ移動"},
+    {"name": "LIVE", "url": "#live", "description": "LIVE状況へ移動"},
+    {"name": "日記", "url": "#diary", "description": "日記へ移動"}
+  ],
+  "categories": ["navigation","travel","utilities"]
+}
+offline_html = """<!DOCTYPE html><html lang="ja"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>オフラインです</title><link rel="stylesheet" href="styles.css">
+<body class="container"><h1>オフラインです</h1>
+<p>ネットワークに接続できません。オンラインに戻ると最新の情報が表示されます。</p>
+<p><a class="button" href="./">トップに戻る</a></p></body></html>"""
+privacy_html = f"""<!DOCTYPE html><html lang="ja"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー</title><link rel="stylesheet" href="styles.css">
+<body class="container"><h1>プライバシーポリシー</h1>
+<p>このアプリは個人情報の収集を最小限にし、法令およびガイドラインを遵守します。</p>
+<h2>保存されるデータ</h2>
+<ul><li>端末内（LocalStorage）のみ：スポット、LIVE、日記、出会い、チェック情報</li></ul>
+<h2>アクセス解析</h2>
+<p>導入する場合はIP匿名化・オプトアウトの案内を追記してください。</p>
+<p>最終更新日：{now}</p></body></html>"""
+terms_html = f"""<!DOCTYPE html><html lang="ja"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>利用規約</title><link rel="stylesheet" href="styles.css">
+<body class="container"><h1>利用規約</h1>
+<ol><li>本サービスは現状有姿で提供されます。</li>
+<li>利用者は法令・公序良俗に反する行為を行わないものとします。</li>
+<li>免責・禁止事項・準拠法等を必要に応じて追記してください。</li></ol>
+<p>最終更新日：{now}</p></body></html>"""
+
+# ------------------------ icons (192, 512, og) ------------------------
+def make_icon(size, path, text="OH"):
+    bg = (11,16,32,255)
+    img = Image.new("RGBA", (size, size), bg)
+    d = ImageDraw.Draw(img)
+    margin = size // 14
+    d.rounded_rectangle((margin, margin, size-margin, size-margin), radius=size//6, outline=(255,255,255,255), width=size//16)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size//3)
+    except Exception:
+        font = ImageFont.load_default()
+    tw, th = d.textsize(text, font=font)
+    d.text(((size - tw)//2, (size - th)//2), text, fill=(255,255,255,255), font=font)
+    img.save(path, "PNG")
+
+make_icon(192, icons/"icon-192.png")
+make_icon(512, icons/"icon-512.png")
+# OG image 1200x630
+og = Image.new("RGBA", (1200, 630), (11,16,32,255))
+d = ImageDraw.Draw(og)
+d.rectangle((40,40,1160,590), outline=(255,255,255,255), width=8)
+try:
+    f1 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
+    f2 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+except Exception:
+    f1 = ImageFont.load_default(); f2 = ImageFont.load_default()
+d.text((70,160), "お遍路 四国活性化アプリ", fill=(255,255,255,255), font=f1)
+d.text((70,260), "Maps / LIVE / Diary / QR / 88 Checklist", fill=(200,220,255,255), font=f2)
+og.save(icons/"og.png", "PNG")
+
+# ------------------------ write files ------------------------
+(root/"index.html").write_text(index_html, encoding="utf-8")
+(root/"styles.css").write_text(styles_css, encoding="utf-8")
+(root/"app.js").write_text(app_js, encoding="utf-8")
+(root/"service-worker.js").write_text(sw_js, encoding="utf-8")
+(root/"offline.html").write_text(offline_html, encoding="utf-8")
+(root/"privacy.html").write_text(privacy_html, encoding="utf-8")
+(root/"terms.html").write_text(terms_html, encoding="utf-8")
+(root/"manifest.webmanifest").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# ------------------------ zip ------------------------
+zip_path = "/mnt/data/ohenro-ultimate.zip"
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in root.rglob("*"):
+        z.write(p, p.relative_to(root).as_posix())
+
+zip_path
